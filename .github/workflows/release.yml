@@ -157,3 +157,46 @@ jobs:
         with:
           tag_name: ${{ needs.create-release.outputs.version }}
           files: ${{ env.ARCHIVE_NAME }}
+
+  # 构建完成后更新 Release 说明
+  update-release:
+    name: Update Release Notes
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update Release Body
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.version }}
+          body: |
+            ## AutoContinue ${{ needs.create-release.outputs.version }}
+
+            智能 CLI 工具包装器，用于自动继续/重试 AI CLI 工具。
+
+            ### 下载
+
+            | 平台 | 架构 | 下载 |
+            |------|------|------|
+            | Windows | x64 | `ac-${{ needs.create-release.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+            | Windows | x86 | `ac-${{ needs.create-release.outputs.version }}-i686-pc-windows-msvc.zip` |
+            | Linux | x64 | `ac-${{ needs.create-release.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux | x86 | `ac-${{ needs.create-release.outputs.version }}-i686-unknown-linux-gnu.tar.gz` |
+            | macOS | x64 (Intel) | `ac-${{ needs.create-release.outputs.version }}-x86_64-apple-darwin.tar.gz` |
+            | macOS | ARM64 (Apple Silicon) | `ac-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.tar.gz` |
+
+            ### 安装方法
+
+            1. 下载对应平台的压缩包
+            2. 解压到任意目录
+            3. 将 `ac` (或 `ac.exe`) 添加到系统 PATH
+
+            ### 快速开始
+
+            ```bash
+            ac claude --resume -cp "继续" -rp "重试"
+            ```
+
+            详细使用说明请参阅 [README.md](https://github.com/MoYeRanQianZhi/AutoContinue#readme)

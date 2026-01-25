@@ -90,8 +90,23 @@ impl Runner {
             .context("无法创建PTY")?;
 
         // 构建命令
-        let mut cmd = CommandBuilder::new(cli);
-        cmd.args(args);
+        // 在Windows上，直接使用命令名，让系统PATH来解析
+        // 对于.cmd/.bat脚本（如npm全局安装的CLI），需要通过cmd.exe来执行
+        #[cfg(target_os = "windows")]
+        let cmd = {
+            let mut c = CommandBuilder::new("cmd.exe");
+            c.arg("/c");
+            c.arg(cli);
+            c.args(args);
+            c
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let cmd = {
+            let mut c = CommandBuilder::new(cli);
+            c.args(args);
+            c
+        };
 
         // 在从端启动子进程
         let child = pair
@@ -262,7 +277,7 @@ impl Runner {
         Ok(())
     }
 
-    /// 向CLI发送一行输入（自动添加回车符）
+    /// 向CLI发送一行输入（自动添加回车换行符）
     ///
     /// # 参数
     /// - `line`: 要发送的输入行
@@ -271,11 +286,12 @@ impl Runner {
     /// 成功返回Ok(())，失败返回错误
     ///
     /// # 注意
-    /// 使用 \r（回车符）而不是 \n（换行符），因为终端模拟中
-    /// 按下Enter键发送的是回车符
+    /// 使用 \r\n（回车换行符），这是Windows终端的标准行结束符
     pub fn send_line(&mut self, line: &str) -> Result<()> {
-        let input = format!("{}\r", line);
-        self.send_input(&input)
+        // 先发送文本内容
+        self.send_input(line)?;
+        // 再单独发送回车，模拟按下Enter键
+        self.send_input("\r")
     }
 
     /// 获取自上次活动以来的静默时间

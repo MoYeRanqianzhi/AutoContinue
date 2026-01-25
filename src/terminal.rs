@@ -65,8 +65,9 @@ impl Color {
                 matches!(n, 1 | 9 | 52..=57 | 88..=93 | 124..=129 | 160..=165 | 196..=201)
             }
             // RGB 红色：R 分量显著大于 G 和 B
+            // 放宽条件：R > 128 且是主导色（R > G + 30 且 R > B + 30）
             Color::Rgb(r, g, b) => {
-                *r > 150 && *g < 100 && *b < 100
+                *r > 128 && *r > *g + 30 && *r > *b + 30
             }
             Color::Default => false,
         }
@@ -775,10 +776,39 @@ impl VirtualTerminal {
             .collect()
     }
 
+    /// 获取新增内容中所有非默认颜色的调试信息
+    /// 用于诊断颜色检测问题
+    pub fn get_color_debug_info(&self) -> String {
+        use std::collections::HashMap;
+        let mut color_counts: HashMap<String, usize> = HashMap::new();
+
+        for (_, color) in &self.new_content {
+            if *color != Color::Default {
+                let key = format!("{:?}", color);
+                *color_counts.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        if color_counts.is_empty() {
+            return String::from("无非默认颜色");
+        }
+
+        color_counts
+            .into_iter()
+            .map(|(color, count)| format!("{}({})", color, count))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// 清除新增内容追踪器（在发送提示词后调用）
+    /// 同时重置颜色状态，避免残留的红色状态影响后续检测
     pub fn clear_new_content(&mut self) {
         self.new_content.clear();
         self.has_new_content = false;
+        // 重置颜色状态，避免CLI未重置颜色导致后续误判
+        self.current_fg = Color::Default;
+        self.current_bg = Color::Default;
+        self.current_bold = false;
     }
 
     /// 检查是否有新内容

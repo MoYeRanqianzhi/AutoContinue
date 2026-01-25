@@ -457,6 +457,18 @@ impl Runner {
         }
     }
 
+    /// 获取颜色调试信息
+    ///
+    /// 返回新增内容中所有非默认颜色的统计信息
+    /// 用于诊断颜色检测问题
+    pub fn get_color_debug_info(&self) -> String {
+        if let Ok(term) = self.terminal.lock() {
+            term.get_color_debug_info()
+        } else {
+            String::from("无法获取")
+        }
+    }
+
     /// 清除错误检测状态
     ///
     /// 在发送提示词后调用，重置新增内容追踪器，

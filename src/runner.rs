@@ -277,30 +277,18 @@ impl Runner {
         Ok(())
     }
 
-    /// 向CLI发送一行输入（模拟真实键盘输入）
+    /// 向CLI发送一行输入（自动添加回车）
     ///
     /// # 参数
     /// - `line`: 要发送的输入行
     ///
     /// # 返回值
     /// 成功返回Ok(())，失败返回错误
-    ///
-    /// # 注意
-    /// 模拟真实的键盘输入，每个字符之间有小延迟，
-    /// 避免被CLI程序当作粘贴处理
     pub fn send_line(&mut self, line: &str) -> Result<()> {
-        // 逐字符发送，模拟真实打字
-        for c in line.chars() {
-            self.send_input(&c.to_string())?;
-            // 每个字符之间加10ms延迟，模拟打字速度
-            thread::sleep(Duration::from_millis(10));
-        }
-
-        // 等待一小段时间确保文字被处理
-        thread::sleep(Duration::from_millis(50));
-
-        // 发送回车键（Enter）
-        self.send_input("\r")
+        // 发送文本内容
+        self.send_input(line)?;
+        // 发送换行符触发提交（尝试 \n）
+        self.send_input("\n")
     }
 
     /// 获取自上次活动以来的静默时间

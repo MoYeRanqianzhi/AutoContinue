@@ -33,27 +33,27 @@ pub struct Args {
 
     /// 继续的提示词，当CLI正常结束时发送
     /// 与 -cpf 互斥
-    #[arg(short = 'c', long = "continue-prompt", value_name = "PROMPT")]
+    #[arg(short = 'c', long = "continue-prompt", visible_alias = "cp", value_name = "PROMPT")]
     pub continue_prompt: Option<String>,
 
     /// 继续的提示词文件路径，从文件读取继续提示词
     /// 与 -cp 互斥
-    #[arg(long = "continue-prompt-file", value_name = "FILE", conflicts_with = "continue_prompt")]
+    #[arg(long = "continue-prompt-file", visible_alias = "cpf", value_name = "FILE", conflicts_with = "continue_prompt")]
     pub continue_prompt_file: Option<String>,
 
     /// 重试的提示词，当CLI出错时发送
     /// 与 -rpf 互斥
-    #[arg(short = 'r', long = "retry-prompt", value_name = "PROMPT")]
+    #[arg(short = 'r', long = "retry-prompt", visible_alias = "rp", value_name = "PROMPT")]
     pub retry_prompt: Option<String>,
 
     /// 重试的提示词文件路径，从文件读取重试提示词
     /// 与 -rp 互斥
-    #[arg(long = "retry-prompt-file", value_name = "FILE", conflicts_with = "retry_prompt")]
+    #[arg(long = "retry-prompt-file", visible_alias = "rpf", value_name = "FILE", conflicts_with = "retry_prompt")]
     pub retry_prompt_file: Option<String>,
 
     /// 等待时间（秒），用于给用户自主回复的时间
     /// 超过该时间则自动继续，默认15秒
-    #[arg(short = 's', long = "sleep-time", value_name = "SECONDS", default_value = "15")]
+    #[arg(short = 's', long = "sleep-time", visible_alias = "st", value_name = "SECONDS", default_value = "15")]
     pub sleep_time: u64,
 
     /// 传递给CLI程序的其他参数

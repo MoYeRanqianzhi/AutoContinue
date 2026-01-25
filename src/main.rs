@@ -7,12 +7,11 @@
 //! - CLI正常结束时自动发送继续提示词
 //! - CLI出错时自动发送重试提示词
 //! - 保持CLI的完整交互性，用户可正常操作
-//! - 支持用户手动恢复（在等待期间）
 //! - Ctrl+C优雅退出
 //!
 //! ## 使用示例
 //! ```bash
-//! ac claude --resume -cp "继续迭代" -rp "重试"
+//! ac claude --resume --cp "继续迭代" --rp "重试"
 //! ```
 
 mod args;
@@ -21,8 +20,6 @@ mod monitor;
 mod runner;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -151,9 +148,10 @@ fn run_main_loop(config: Config, exit_flag: Arc<AtomicBool>) -> Result<()> {
                 // 监控进程状态
                 let exit_status = monitor_process(&mut runner, &mut monitor, &exit_flag)?;
 
-                // 等待IO线程结束
+                // 等待IO线程结束（不阻塞等待，因为PTY读取可能会阻塞）
                 runner.stop();
-                let _ = io_handle.join();
+                // 不等待IO线程，让它自然结束
+                drop(io_handle);
 
                 // 如果需要退出，跳出循环
                 if monitor.should_exit() {
@@ -270,51 +268,21 @@ fn wait_for_user_or_timeout(
         wait_time.as_secs()
     );
 
-    // 尝试启用原始模式以检测按键
-    let raw_mode_enabled = enable_raw_mode().is_ok();
-
+    // 简化版本：直接使用计时器等待
+    // 注意：当前版本不检测键盘输入，仅依赖等待超时
     let start = std::time::Instant::now();
-    let mut user_input = false;
 
     while start.elapsed() < wait_time {
         // 检查退出标志
         if exit_flag.load(Ordering::SeqCst) {
-            if raw_mode_enabled {
-                let _ = disable_raw_mode();
-            }
             return Ok(false);
         }
 
-        // 检查用户输入（非阻塞）
-        if raw_mode_enabled {
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key_event) = event::read()? {
-                    // 检测到按键，用户有响应
-                    // 但忽略Ctrl+C，因为那是退出信号
-                    if !(key_event.modifiers.contains(KeyModifiers::CONTROL)
-                        && key_event.code == KeyCode::Char('c'))
-                    {
-                        user_input = true;
-                        break;
-                    }
-                }
-            }
-        } else {
-            // 如果无法启用原始模式，只能简单等待
-            thread::sleep(Duration::from_millis(100));
-        }
+        // 短暂休眠避免忙等待
+        thread::sleep(Duration::from_millis(100));
     }
 
-    // 恢复终端模式
-    if raw_mode_enabled {
-        let _ = disable_raw_mode();
-    }
-
-    if user_input {
-        monitor.set_user_resumed();
-    }
-
-    Ok(user_input)
+    Ok(false)
 }
 
 /// 带中断的等待

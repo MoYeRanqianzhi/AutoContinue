@@ -161,10 +161,6 @@ fn run_main_loop(config: Config, exit_flag: Arc<AtomicBool>) -> Result<()> {
         if silence_duration >= silence_threshold {
             auto_continue_count += 1;
 
-            // 获取统计信息（用于诊断）
-            let total_red = runner.get_red_stats();
-            println!("\n[AC] 调试 - 红色字符: {} (阈值>=50)", total_red);
-
             // 检测是否有错误输出
             let is_error = runner.has_error_output();
 

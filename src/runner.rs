@@ -69,12 +69,6 @@ pub struct Runner {
 
     /// 虚拟终端，用于追踪输出内容和检测错误
     terminal: SharedTerminal,
-
-    /// 终端宽度
-    terminal_width: usize,
-
-    /// 终端高度
-    terminal_height: usize,
 }
 
 impl Runner {
@@ -156,8 +150,6 @@ impl Runner {
             last_activity_time,
             inject_sender: None,
             terminal,
-            terminal_width,
-            terminal_height,
         })
     }
 
@@ -367,15 +359,6 @@ impl Runner {
         }
     }
 
-    /// 重置活动时间为当前时间
-    ///
-    /// 当用户手动操作或其他事件发生时调用
-    pub fn reset_activity_time(&self) {
-        if let Ok(mut time) = self.last_activity_time.lock() {
-            *time = Instant::now();
-        }
-    }
-
     /// 检查CLI进程是否仍在运行
     ///
     /// # 返回值
@@ -399,33 +382,6 @@ impl Runner {
                 false
             }
         }
-    }
-
-    /// 等待CLI进程结束
-    ///
-    /// # 返回值
-    /// 返回进程的退出状态
-    pub fn wait(&mut self) -> Result<portable_pty::ExitStatus> {
-        let status = self.child.wait().context("等待CLI进程结束失败")?;
-        self.running.store(false, Ordering::SeqCst);
-        *self.exit_status.lock().unwrap() = Some(status.clone());
-        Ok(status)
-    }
-
-    /// 获取进程退出状态
-    ///
-    /// # 返回值
-    /// 如果进程已退出，返回Some(ExitStatus)，否则返回None
-    pub fn get_exit_status(&self) -> Option<portable_pty::ExitStatus> {
-        self.exit_status.lock().unwrap().clone()
-    }
-
-    /// 获取运行状态标志的克隆
-    ///
-    /// # 返回值
-    /// 返回运行状态的Arc引用
-    pub fn get_running_flag(&self) -> Arc<AtomicBool> {
-        self.running.clone()
     }
 
     /// 检查输出中是否包含红色文本（错误检测）
@@ -457,17 +413,6 @@ impl Runner {
         }
     }
 
-    /// 获取统计信息（用于调试）
-    ///
-    /// 返回红色字符总数
-    pub fn get_red_stats(&self) -> usize {
-        if let Ok(term) = self.terminal.lock() {
-            term.get_red_stats()
-        } else {
-            0
-        }
-    }
-
     /// 清除错误检测状态
     ///
     /// 在发送提示词后调用，重置新增内容追踪器，
@@ -486,17 +431,6 @@ impl Runner {
         // 恢复终端模式
         let _ = terminal::disable_raw_mode();
     }
-}
-
-/// 检查退出状态是否表示成功
-///
-/// # 参数
-/// - `status`: 进程退出状态
-///
-/// # 返回值
-/// 如果退出码为0返回true，否则返回false
-pub fn is_success(status: &portable_pty::ExitStatus) -> bool {
-    status.success()
 }
 
 /// 将crossterm事件转换为PTY可接受的字节序列
@@ -627,8 +561,8 @@ mod tests {
         let mut runner = Runner::new("cmd", &["/c".to_string(), "echo".to_string(), "hello".to_string()])?;
 
         // 等待进程结束
-        let status = runner.wait()?;
-        assert!(is_success(&status));
+        let status = runner.child.wait().context("等待进程失败")?;
+        assert!(status.success());
 
         Ok(())
     }
@@ -639,8 +573,8 @@ mod tests {
         let mut runner = Runner::new("echo", &["hello".to_string()])?;
 
         // 等待进程结束
-        let status = runner.wait()?;
-        assert!(is_success(&status));
+        let status = runner.child.wait().context("等待进程失败")?;
+        assert!(status.success());
 
         Ok(())
     }

@@ -805,32 +805,10 @@ impl VirtualTerminal {
         result
     }
 
-    /// 获取统计信息（用于调试）
-    /// 返回红色字符总数
-    pub fn get_red_stats(&self) -> usize {
-        const IGNORE_BOTTOM_ROWS: usize = 3;
-        let check_height = self.height.saturating_sub(IGNORE_BOTTOM_ROWS);
-
-        let mut total_red = 0;
-        for row in 0..check_height {
-            for cell in &self.buffer[row] {
-                if cell.fg.is_red() && cell.ch != ' ' {
-                    total_red += 1;
-                }
-            }
-        }
-        total_red
-    }
-
     /// 清除新增内容追踪器（在发送提示词后调用）
     pub fn clear_new_content(&mut self) {
         self.new_content.clear();
         self.has_new_content = false;
-    }
-
-    /// 检查是否有新内容
-    pub fn has_new_output(&self) -> bool {
-        self.has_new_content
     }
 }
 

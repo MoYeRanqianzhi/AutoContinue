@@ -92,6 +92,16 @@ enum ParserState {
     Osc,
 }
 
+/// 红色文本片段（用于错误检测）
+#[derive(Debug)]
+struct RedSegment {
+    /// 片段内容
+    content: String,
+    /// 所在行号
+    #[allow(dead_code)]
+    row: usize,
+}
+
 /// 虚拟终端
 /// 维护终端屏幕缓冲区和状态，包含内置的 ANSI 解析器
 pub struct VirtualTerminal {
@@ -770,12 +780,15 @@ impl VirtualTerminal {
         }
     }
 
-    /// 使用 LCS 对齐算法检查是否有新增的红色内容
+    /// 检查是否有新增的红色内容
     ///
-    /// 算法步骤：
-    /// 1. 提取基线和当前屏幕的行内容（忽略底部状态栏）
-    /// 2. 使用 LCS 算法对齐两个列表，找出真正新增的行
-    /// 3. 只在新增行中检测红色
+    /// 改进的算法：直接比较红色内容本身
+    /// 1. 提取基线屏幕中的所有红色文本片段
+    /// 2. 提取当前屏幕中的所有红色文本片段（忽略底部状态栏）
+    /// 3. 找出当前屏幕中存在但基线中不存在的红色片段
+    /// 4. 如果有足够长的新红色内容，判定为错误
+    ///
+    /// 这种方式可以有效过滤固定的UI红色元素（它们在基线中已存在）
     ///
     /// 返回 true 表示检测到新增的错误
     pub fn has_red_content(&self) -> bool {
@@ -784,65 +797,98 @@ impl VirtualTerminal {
 
         let check_height = self.height.saturating_sub(IGNORE_BOTTOM_ROWS);
 
-        // 提取基线和当前屏幕的行内容
-        let baseline_lines = self.extract_lines(&self.baseline_buffer, check_height);
-        let current_lines = self.extract_lines(&self.buffer, check_height);
+        // 提取基线和当前屏幕的红色文本片段
+        let baseline_red_segments = self.extract_red_segments(&self.baseline_buffer, check_height);
+        let current_red_segments = self.extract_red_segments(&self.buffer, check_height);
 
-        // 使用 LCS 找出新增的行索引
-        let new_line_indices = self.find_new_lines(&baseline_lines, &current_lines);
+        // 找出新增的红色片段（在当前但不在基线）
+        let mut max_new_segment_len = 0;
 
-        // 在新增行中检测红色
-        let mut max_consecutive_red = 0;
-
-        for &row in &new_line_indices {
-            if row >= check_height {
-                continue;
-            }
-            let mut consecutive_red = 0;
-            for cell in &self.buffer[row] {
-                if cell.fg.is_red() && cell.ch != ' ' {
-                    consecutive_red += 1;
-                    max_consecutive_red = max_consecutive_red.max(consecutive_red);
-                } else {
-                    consecutive_red = 0;
-                }
+        for seg in &current_red_segments {
+            // 检查这个红色片段是否是新的
+            // 如果基线中不存在相同内容的红色片段，则认为是新的
+            let is_new = !baseline_red_segments.iter().any(|bs| bs.content == seg.content);
+            if is_new {
+                max_new_segment_len = max_new_segment_len.max(seg.content.len());
             }
         }
 
-        max_consecutive_red >= MIN_RED_CHARS
+        max_new_segment_len >= MIN_RED_CHARS
     }
 
-    /// 提取屏幕行内容（去除尾部空格）
-    fn extract_lines(&self, buffer: &[Vec<Cell>], height: usize) -> Vec<String> {
-        let mut lines = Vec::new();
+    /// 从缓冲区提取所有红色文本片段
+    fn extract_red_segments(&self, buffer: &[Vec<Cell>], height: usize) -> Vec<RedSegment> {
+        let mut segments = Vec::new();
+
+        for row in 0..height.min(buffer.len()) {
+            let mut current_segment = String::new();
+
+            for cell in &buffer[row] {
+                if cell.fg.is_red() && cell.ch != ' ' {
+                    current_segment.push(cell.ch);
+                } else if !current_segment.is_empty() {
+                    // 片段结束，保存
+                    segments.push(RedSegment {
+                        content: current_segment.clone(),
+                        row,
+                    });
+                    current_segment.clear();
+                }
+            }
+
+            // 行末的片段
+            if !current_segment.is_empty() {
+                segments.push(RedSegment {
+                    content: current_segment,
+                    row,
+                });
+            }
+        }
+
+        segments
+    }
+
+    /// 提取非空行的内容和行号
+    /// 返回 Vec<(行号, 行内容)>
+    fn extract_nonempty_lines(&self, buffer: &[Vec<Cell>], height: usize) -> Vec<(usize, String)> {
+        let mut result = Vec::new();
         for row in 0..height.min(buffer.len()) {
             let line: String = buffer[row]
                 .iter()
                 .map(|c| c.ch)
                 .collect::<String>()
-                .trim_end()
+                .trim()
                 .to_string();
-            lines.push(line);
+            // 只保留非空行
+            if !line.is_empty() {
+                result.push((row, line));
+            }
         }
-        lines
+        result
     }
 
-    /// 使用 LCS 算法找出新增的行索引
-    /// 返回当前屏幕中新增行的索引列表
-    fn find_new_lines(&self, baseline: &[String], current: &[String]) -> Vec<usize> {
-        let m = baseline.len();
-        let n = current.len();
+    /// 使用 LCS 算法找出新增的行号
+    fn find_new_rows(&self, baseline: &[(usize, String)], current: &[(usize, String)]) -> Vec<usize> {
+        let baseline_contents: Vec<&str> = baseline.iter().map(|(_, s)| s.as_str()).collect();
+        let current_contents: Vec<&str> = current.iter().map(|(_, s)| s.as_str()).collect();
+
+        let m = baseline_contents.len();
+        let n = current_contents.len();
 
         if m == 0 {
             // 基线为空，所有当前行都是新的
-            return (0..n).collect();
+            return current.iter().map(|(row, _)| *row).collect();
+        }
+
+        if n == 0 {
+            return Vec::new();
         }
 
         // 计算 LCS 长度表
         let mut dp = vec![vec![0usize; n + 1]; m + 1];
         for i in 1..=m {
             for j in 1..=n {
-                if baseline[i - 1] == current[j - 1] {
+                if baseline_contents[i - 1] == current_contents[j - 1] {
                     dp[i][j] = dp[i - 1][j - 1] + 1;
                 } else {
                     dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
@@ -850,13 +896,13 @@ impl VirtualTerminal {
             }
         }
 
-        // 回溯找出 LCS 中的行（当前屏幕的索引）
-        let mut lcs_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // 回溯找出 LCS 中的当前列表索引
+        let mut lcs_current_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut i = m;
         let mut j = n;
         while i > 0 && j > 0 {
-            if baseline[i - 1] == current[j - 1] {
-                lcs_indices.insert(j - 1);
+            if baseline_contents[i - 1] == current_contents[j - 1] {
+                lcs_current_indices.insert(j - 1);
                 i -= 1;
                 j -= 1;
             } else if dp[i - 1][j] > dp[i][j - 1] {
@@ -866,8 +912,13 @@ impl VirtualTerminal {
             }
         }
 
-        // 不在 LCS 中的行就是新增的
-        (0..n).filter(|idx| !lcs_indices.contains(idx)).collect()
+        // 不在 LCS 中的行就是新增的，返回实际行号
+        current
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !lcs_current_indices.contains(idx))
+            .map(|(_, (row, _))| *row)
+            .collect()
     }
 
     /// 获取新增的红色文本
@@ -875,54 +926,52 @@ impl VirtualTerminal {
         const IGNORE_BOTTOM_ROWS: usize = 3;
         let check_height = self.height.saturating_sub(IGNORE_BOTTOM_ROWS);
 
-        let baseline_lines = self.extract_lines(&self.baseline_buffer, check_height);
-        let current_lines = self.extract_lines(&self.buffer, check_height);
-        let new_line_indices = self.find_new_lines(&baseline_lines, &current_lines);
+        let baseline_red_segments = self.extract_red_segments(&self.baseline_buffer, check_height);
+        let current_red_segments = self.extract_red_segments(&self.buffer, check_height);
 
+        // 收集新增的红色内容
         let mut result = String::new();
-        for &row in &new_line_indices {
-            if row >= check_height {
-                continue;
-            }
-            for cell in &self.buffer[row] {
-                if cell.fg.is_red() && cell.ch != ' ' {
-                    result.push(cell.ch);
+        for seg in &current_red_segments {
+            let is_new = !baseline_red_segments.iter().any(|bs| bs.content == seg.content);
+            if is_new {
+                if !result.is_empty() {
+                    result.push(' ');
                 }
+                result.push_str(&seg.content);
             }
         }
         result
     }
 
     /// 获取统计信息（用于调试）
-    /// 返回 (检查行数, 新增行数, 红色字符数, 最大连续红色)
-    pub fn get_red_stats(&self) -> (usize, usize, usize, usize) {
+    /// 返回 (基线红色片段数, 当前红色片段数, 新增红色片段数, 新增红色字符数, 最大新片段长度)
+    pub fn get_red_stats(&self) -> (usize, usize, usize, usize, usize) {
         const IGNORE_BOTTOM_ROWS: usize = 3;
         let check_height = self.height.saturating_sub(IGNORE_BOTTOM_ROWS);
 
-        let baseline_lines = self.extract_lines(&self.baseline_buffer, check_height);
-        let current_lines = self.extract_lines(&self.buffer, check_height);
-        let new_line_indices = self.find_new_lines(&baseline_lines, &current_lines);
+        let baseline_red_segments = self.extract_red_segments(&self.baseline_buffer, check_height);
+        let current_red_segments = self.extract_red_segments(&self.buffer, check_height);
 
-        let mut total_red = 0;
-        let mut max_consecutive_red = 0;
+        let mut new_segment_count = 0;
+        let mut new_red_chars = 0;
+        let mut max_new_segment_len = 0;
 
-        for &row in &new_line_indices {
-            if row >= check_height {
-                continue;
-            }
-            let mut consecutive_red = 0;
-            for cell in &self.buffer[row] {
-                if cell.fg.is_red() && cell.ch != ' ' {
-                    total_red += 1;
-                    consecutive_red += 1;
-                    max_consecutive_red = max_consecutive_red.max(consecutive_red);
-                } else {
-                    consecutive_red = 0;
-                }
+        for seg in &current_red_segments {
+            let is_new = !baseline_red_segments.iter().any(|bs| bs.content == seg.content);
+            if is_new {
+                new_segment_count += 1;
+                new_red_chars += seg.content.len();
+                max_new_segment_len = max_new_segment_len.max(seg.content.len());
             }
         }
 
-        (check_height, new_line_indices.len(), total_red, max_consecutive_red)
+        (
+            baseline_red_segments.len(),
+            current_red_segments.len(),
+            new_segment_count,
+            new_red_chars,
+            max_new_segment_len,
+        )
     }
 
     /// 获取新增内容中所有非默认颜色的调试信息（差异法）

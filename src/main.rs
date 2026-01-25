@@ -162,9 +162,9 @@ fn run_main_loop(config: Config, exit_flag: Arc<AtomicBool>) -> Result<()> {
             auto_continue_count += 1;
 
             // 获取统计信息（用于诊断）
-            let (check_rows, new_lines, total_red, max_consecutive) = runner.get_red_stats();
-            println!("\n[AC] 调试 - 检查{}行(忽略底部3行), 新增{}行, 红色{}字符, 连续{} (阈值>=5)",
-                check_rows, new_lines, total_red, max_consecutive);
+            let (baseline_segs, current_segs, new_segs, new_chars, max_len) = runner.get_red_stats();
+            println!("\n[AC] 调试 - 基线红{}段, 当前红{}段, 新增{}段/{}字符, 最大{}字符 (阈值>=5)",
+                baseline_segs, current_segs, new_segs, new_chars, max_len);
 
             // 检测是否有错误输出
             let is_error = runner.has_error_output();

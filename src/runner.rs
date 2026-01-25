@@ -471,12 +471,12 @@ impl Runner {
 
     /// 获取统计信息（用于调试）
     ///
-    /// 返回 (检查行数, 新增行数, 红色字符数, 最大连续红色)
-    pub fn get_red_stats(&self) -> (usize, usize, usize, usize) {
+    /// 返回 (基线非空行数, 当前非空行数, 新增行数, 红色字符数, 最大连续红色)
+    pub fn get_red_stats(&self) -> (usize, usize, usize, usize, usize) {
         if let Ok(term) = self.terminal.lock() {
             term.get_red_stats()
         } else {
-            (0, 0, 0, 0)
+            (0, 0, 0, 0, 0)
         }
     }
 

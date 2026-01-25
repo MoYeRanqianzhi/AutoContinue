@@ -277,7 +277,7 @@ impl Runner {
         Ok(())
     }
 
-    /// 向CLI发送一行输入（自动添加回车）
+    /// 向CLI发送一行输入（模拟打字，自动添加回车）
     ///
     /// # 参数
     /// - `line`: 要发送的输入行
@@ -285,12 +285,15 @@ impl Runner {
     /// # 返回值
     /// 成功返回Ok(())，失败返回错误
     pub fn send_line(&mut self, line: &str) -> Result<()> {
-        // 发送文本内容
-        self.send_input(line)?;
-        // 等待一小段时间，让 CLI 处理文本
-        thread::sleep(Duration::from_millis(100));
-        // 发送回车+换行
-        self.send_input("\r\n")
+        // 逐字符发送，模拟真实打字，避免被当作粘贴
+        for c in line.chars() {
+            self.send_input(&c.to_string())?;
+            // 字符之间加小延迟
+            thread::sleep(Duration::from_millis(5));
+        }
+        // 发送回车（与用户按 Enter 时 key_event_to_bytes 发送的一致）
+        thread::sleep(Duration::from_millis(10));
+        self.send_input("\r")
     }
 
     /// 获取自上次活动以来的静默时间

@@ -64,6 +64,13 @@ fn print_banner(config: &Config) {
     // 计算总等待时间
     let total_wait = config.silence_threshold + config.sleep_time;
 
+    // 获取提示词显示内容（IO模式显示文件路径）
+    let prompt_display = if let Some(ref io_path) = config.continue_prompt_io {
+        format!("[IO] {}", io_path)
+    } else {
+        config.continue_prompt.clone()
+    };
+
     println!("╔══════════════════════════════════════════════════════════╗");
     println!("║           AutoContinue (AC) v{}                        ║", VERSION);
     println!("╠══════════════════════════════════════════════════════════╣");
@@ -71,7 +78,10 @@ fn print_banner(config: &Config) {
     println!("║  静默阈值: {:3} 秒 (用户设置)                             ║", config.silence_threshold);
     println!("║  额外等待: {:3} 秒 (用户设置)                             ║", config.sleep_time);
     println!("║  总等待:   {:3} 秒                                        ║", total_wait);
-    println!("║  继续提示词: {:44} ║", truncate_str(&config.continue_prompt, 44));
+    println!("║  继续提示词: {:44} ║", truncate_str(&prompt_display, 44));
+    if config.is_continue_prompt_io() {
+        println!("║  [IO模式] 每次使用时重新读取文件                          ║");
+    }
     println!("╠══════════════════════════════════════════════════════════╣");
     println!("║  按 Ctrl+C 退出 | 任何输入/输出都会重置计时器            ║");
     println!("╚══════════════════════════════════════════════════════════╝");
@@ -149,12 +159,21 @@ fn run_main_loop(config: Config, exit_flag: Arc<AtomicBool>) -> Result<()> {
         if silence_duration >= silence_threshold {
             auto_continue_count += 1;
 
+            // 获取当前的继续提示词（IO模式会重新读取文件）
+            let prompt = match config.get_continue_prompt() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[AC] 获取继续提示词失败: {}", e);
+                    continue;
+                }
+            };
+
             // 发送继续提示词
             println!("\n[AC] === 静默 {} 秒，自动发送第 {} 次继续提示词 ===",
                 silence_duration.as_secs(), auto_continue_count);
-            println!("[AC] 发送: {}", config.continue_prompt);
+            println!("[AC] 发送: {}", prompt);
 
-            if let Err(e) = runner.send_line(&config.continue_prompt) {
+            if let Err(e) = runner.send_line(&prompt) {
                 eprintln!("[AC] 发送提示词失败: {}", e);
             }
 

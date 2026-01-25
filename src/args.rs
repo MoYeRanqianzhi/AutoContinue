@@ -5,9 +5,11 @@
 //!
 //! ## AC参数
 //! - `-cp, --continue-prompt`: 继续的提示词
-//! - `-cpf, --continue-prompt-file`: 继续的提示词文件
+//! - `-cpf, --continue-prompt-file`: 继续的提示词文件（启动时读取一次）
+//! - `-cpio, --continue-prompt-io`: 继续的提示词IO文件（每次使用时重新读取）
 //! - `-rp, --retry-prompt`: 重试的提示词
-//! - `-rpf, --retry-prompt-file`: 重试的提示词文件
+//! - `-rpf, --retry-prompt-file`: 重试的提示词文件（启动时读取一次）
+//! - `-rpio, --retry-prompt-io`: 重试的提示词IO文件（每次使用时重新读取）
 //! - `-st, --sleep-time`: 等待时间（秒），默认15秒
 //! - `-sth, --silence-threshold`: 静默阈值（秒），默认30秒
 //! - `-h, --help`: 显示帮助信息
@@ -17,7 +19,7 @@
 //! ```
 //! ac claude --resume -cp "继续迭代" -rp "重试"
 //! ac -cp "继续" claude --resume    # AC参数在前也可以
-//! ac claude -cp "继续" --resume    # 混合顺序也可以
+//! ac claude -cpio prompt.md        # 使用IO文件，可动态修改
 //! ```
 
 use clap::Parser;
@@ -31,10 +33,14 @@ const AC_ARGS_WITH_VALUE: &[&str] = &[
     "-cp", "--cp", "--continue-prompt",
     // continue-prompt-file
     "-cpf", "--cpf", "--continue-prompt-file",
+    // continue-prompt-io (新增)
+    "-cpio", "--cpio", "--continue-prompt-io",
     // retry-prompt
     "-rp", "--rp", "--retry-prompt",
     // retry-prompt-file
     "-rpf", "--rpf", "--retry-prompt-file",
+    // retry-prompt-io (新增)
+    "-rpio", "--rpio", "--retry-prompt-io",
     // sleep-time
     "-st", "--st", "--sleep-time",
     // silence-threshold
@@ -49,7 +55,7 @@ const AC_ARGS_NO_VALUE: &[&str] = &[
 
 /// AC特有的短参数列表（需要转换为双横线格式）
 /// 这些参数支持单横线格式（如 -cp）但会被转换为双横线格式（如 --cp）
-const AC_SHORT_ARGS: &[&str] = &["-cp", "-cpf", "-rp", "-rpf", "-st", "-sth"];
+const AC_SHORT_ARGS: &[&str] = &["-cp", "-cpf", "-cpio", "-rp", "-rpf", "-rpio", "-st", "-sth"];
 
 /// AutoContinue (AC) - 自动继续/重试CLI工具的包装器
 ///
@@ -64,24 +70,36 @@ pub struct Args {
     pub cli: String,
 
     /// 继续的提示词，当CLI正常结束时发送
-    /// 与 -cpf 互斥
+    /// 与 -cpf, -cpio 互斥
     #[arg(long = "continue-prompt", visible_alias = "cp", value_name = "PROMPT")]
     pub continue_prompt: Option<String>,
 
-    /// 继续的提示词文件路径，从文件读取继续提示词
-    /// 与 -cp 互斥
+    /// 继续的提示词文件路径，从文件读取继续提示词（启动时读取一次）
+    /// 与 -cp, -cpio 互斥
     #[arg(long = "continue-prompt-file", visible_alias = "cpf", value_name = "FILE", conflicts_with = "continue_prompt")]
     pub continue_prompt_file: Option<String>,
 
+    /// 继续的提示词IO文件路径，每次使用时重新读取文件
+    /// 允许在程序运行时动态修改提示词内容
+    /// 与 -cp, -cpf 互斥
+    #[arg(long = "continue-prompt-io", visible_alias = "cpio", value_name = "FILE", conflicts_with_all = ["continue_prompt", "continue_prompt_file"])]
+    pub continue_prompt_io: Option<String>,
+
     /// 重试的提示词，当CLI出错时发送
-    /// 与 -rpf 互斥
+    /// 与 -rpf, -rpio 互斥
     #[arg(long = "retry-prompt", visible_alias = "rp", value_name = "PROMPT")]
     pub retry_prompt: Option<String>,
 
-    /// 重试的提示词文件路径，从文件读取重试提示词
-    /// 与 -rp 互斥
+    /// 重试的提示词文件路径，从文件读取重试提示词（启动时读取一次）
+    /// 与 -rp, -rpio 互斥
     #[arg(long = "retry-prompt-file", visible_alias = "rpf", value_name = "FILE", conflicts_with = "retry_prompt")]
     pub retry_prompt_file: Option<String>,
+
+    /// 重试的提示词IO文件路径，每次使用时重新读取文件
+    /// 允许在程序运行时动态修改提示词内容
+    /// 与 -rp, -rpf 互斥
+    #[arg(long = "retry-prompt-io", visible_alias = "rpio", value_name = "FILE", conflicts_with_all = ["retry_prompt", "retry_prompt_file"])]
+    pub retry_prompt_io: Option<String>,
 
     /// 等待时间（秒），用于给用户自主回复的时间
     /// 超过该时间则自动继续，默认15秒

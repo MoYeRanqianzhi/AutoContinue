@@ -108,6 +108,9 @@ impl Runner {
             })
             .context("无法创建PTY")?;
 
+        // 获取当前工作目录
+        let current_dir = std::env::current_dir().context("无法获取当前工作目录")?;
+
         // 构建命令
         // 在Windows上，直接使用命令名，让系统PATH来解析
         // 对于.cmd/.bat脚本（如npm全局安装的CLI），需要通过cmd.exe来执行
@@ -117,6 +120,7 @@ impl Runner {
             c.arg("/c");
             c.arg(cli);
             c.args(args);
+            c.cwd(&current_dir);
             c
         };
 
@@ -124,6 +128,7 @@ impl Runner {
         let cmd = {
             let mut c = CommandBuilder::new(cli);
             c.args(args);
+            c.cwd(&current_dir);
             c
         };
 

@@ -8,6 +8,7 @@
 //! - 跟踪最后活动时间（输入/输出）用于静默检测
 //! - 虚拟终端追踪输出内容，用于错误检测
 //! - 确保用户可以正常操作CLI
+//! - 智能鼠标模式：只有在子进程启用鼠标时才转发鼠标事件
 //!
 //! ## 跨平台支持
 //! - Windows: 使用ConPTY
@@ -69,6 +70,10 @@ pub struct Runner {
 
     /// 虚拟终端，用于追踪输出内容和检测错误
     terminal: SharedTerminal,
+
+    /// 子进程是否启用了鼠标模式
+    /// 只有当子进程发送鼠标启用序列时，才转发鼠标事件
+    mouse_mode_enabled: Arc<AtomicBool>,
 }
 
 impl Runner {
@@ -141,6 +146,9 @@ impl Runner {
         // 创建虚拟终端用于追踪输出和检测错误
         let terminal = create_shared_terminal(terminal_width, terminal_height);
 
+        // 鼠标模式初始为禁用，等待子进程发送启用序列
+        let mouse_mode_enabled = Arc::new(AtomicBool::new(false));
+
         Ok(Runner {
             pty_pair: pair,
             writer: Arc::new(Mutex::new(writer)),
@@ -150,17 +158,19 @@ impl Runner {
             last_activity_time,
             inject_sender: None,
             terminal,
+            mouse_mode_enabled,
         })
     }
 
     /// 启动双向IO转发线程
     ///
     /// 该方法启动两个后台线程：
-    /// 1. 输出转发：PTY -> stdout（显示CLI输出）+ 虚拟终端处理
+    /// 1. 输出转发：PTY -> stdout（显示CLI输出）+ 虚拟终端处理 + 鼠标模式检测
     /// 2. 输入转发：stdin -> PTY（用户输入到CLI）
     ///
     /// 每次有输入或输出时，都会更新最后活动时间。
     /// 输出数据同时被送入虚拟终端进行解析和错误检测。
+    /// 自动检测子进程是否启用鼠标模式，只有启用时才转发鼠标事件。
     ///
     /// # 返回值
     /// 返回包含两个线程句柄的IoHandles结构
@@ -168,7 +178,8 @@ impl Runner {
         // 启用终端原始模式，以便直接获取用户输入
         let _ = terminal::enable_raw_mode();
 
-        // 启用鼠标捕获，以便转发鼠标事件到CLI
+        // 启用鼠标捕获，以便能够接收鼠标事件
+        // 但只有当子进程启用鼠标模式时才转发
         let _ = crossterm::execute!(
             std::io::stdout(),
             crossterm::event::EnableMouseCapture
@@ -199,8 +210,13 @@ impl Runner {
         // 获取虚拟终端的共享引用
         let terminal = self.terminal.clone();
 
-        // 启动输出转发线程：PTY -> stdout + 虚拟终端
+        // 获取鼠标模式标志的共享引用
+        let mouse_mode_output = self.mouse_mode_enabled.clone();
+        let mouse_mode_input = self.mouse_mode_enabled.clone();
+
+        // 启动输出转发线程：PTY -> stdout + 虚拟终端 + 鼠标模式检测
         // 每次有输出时更新最后活动时间，并送入虚拟终端处理
+        // 检测鼠标模式启用/禁用序列
         let output_handle = thread::spawn(move || {
             let mut stdout = std::io::stdout();
             let mut buffer = [0u8; 4096];
@@ -216,6 +232,9 @@ impl Runner {
                         if let Ok(mut time) = last_activity_output.lock() {
                             *time = Instant::now();
                         }
+
+                        // 检测鼠标模式启用/禁用序列
+                        detect_mouse_mode(&buffer[..n], &mouse_mode_output);
 
                         // 将数据送入虚拟终端处理（用于错误检测）
                         if let Ok(mut term) = terminal.lock() {
@@ -243,7 +262,7 @@ impl Runner {
         // 启动输入转发线程：stdin -> PTY
         // 使用crossterm的event系统正确处理特殊键（方向键、ESC等）
         // 每次有输入时更新最后活动时间
-        // 同时检查注入的输入（通过channel）
+        // 只有在鼠标模式启用时才转发鼠标事件
         let input_handle = thread::spawn(move || {
             while running_input.load(Ordering::SeqCst) {
                 // 首先检查是否有注入的输入
@@ -267,8 +286,11 @@ impl Runner {
                         // 有事件可读，使用crossterm读取事件
                         match crossterm::event::read() {
                             Ok(event) => {
+                                // 获取当前鼠标模式状态
+                                let mouse_enabled = mouse_mode_input.load(Ordering::SeqCst);
+
                                 // 将事件转换为字节序列
-                                if let Some(bytes) = event_to_bytes(&event) {
+                                if let Some(bytes) = event_to_bytes(&event, mouse_enabled) {
                                     // 更新最后活动时间（有输入）
                                     if let Ok(mut time) = last_activity_input.lock() {
                                         *time = Instant::now();
@@ -444,6 +466,66 @@ impl Runner {
     }
 }
 
+/// 检测输出中的鼠标模式启用/禁用序列
+///
+/// 检测以下ANSI转义序列：
+/// - 启用：\x1b[?1000h, \x1b[?1002h, \x1b[?1003h, \x1b[?1006h
+/// - 禁用：\x1b[?1000l, \x1b[?1002l, \x1b[?1003l, \x1b[?1006l
+///
+/// # 参数
+/// - `data`: 输出数据
+/// - `mouse_mode`: 鼠标模式标志
+fn detect_mouse_mode(data: &[u8], mouse_mode: &AtomicBool) {
+    // 鼠标模式启用序列
+    const MOUSE_ENABLE_PATTERNS: &[&[u8]] = &[
+        b"\x1b[?1000h",  // X10 鼠标模式
+        b"\x1b[?1002h",  // 按钮事件鼠标模式
+        b"\x1b[?1003h",  // 任意事件鼠标模式
+        b"\x1b[?1006h",  // SGR 扩展鼠标模式
+    ];
+
+    // 鼠标模式禁用序列
+    const MOUSE_DISABLE_PATTERNS: &[&[u8]] = &[
+        b"\x1b[?1000l",
+        b"\x1b[?1002l",
+        b"\x1b[?1003l",
+        b"\x1b[?1006l",
+    ];
+
+    // 检测启用序列
+    for pattern in MOUSE_ENABLE_PATTERNS {
+        if contains_subsequence(data, pattern) {
+            mouse_mode.store(true, Ordering::SeqCst);
+            return;
+        }
+    }
+
+    // 检测禁用序列
+    for pattern in MOUSE_DISABLE_PATTERNS {
+        if contains_subsequence(data, pattern) {
+            mouse_mode.store(false, Ordering::SeqCst);
+            return;
+        }
+    }
+}
+
+/// 检查数据中是否包含指定的子序列
+fn contains_subsequence(data: &[u8], pattern: &[u8]) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
+    if data.len() < pattern.len() {
+        return false;
+    }
+
+    for window in data.windows(pattern.len()) {
+        if window == pattern {
+            return true;
+        }
+    }
+    false
+}
+
 /// 将crossterm事件转换为PTY可接受的字节序列
 ///
 /// 该函数处理键盘事件、鼠标事件和粘贴事件，将它们转换为
@@ -451,13 +533,21 @@ impl Runner {
 ///
 /// # 参数
 /// - `event`: crossterm事件
+/// - `mouse_enabled`: 是否启用鼠标模式（只有启用时才转发鼠标事件）
 ///
 /// # 返回值
 /// 如果是支持的事件类型，返回对应的字节序列；否则返回None
-fn event_to_bytes(event: &Event) -> Option<Vec<u8>> {
+fn event_to_bytes(event: &Event, mouse_enabled: bool) -> Option<Vec<u8>> {
     match event {
         Event::Key(key_event) => key_event_to_bytes(key_event),
-        Event::Mouse(mouse_event) => mouse_event_to_bytes(mouse_event),
+        Event::Mouse(mouse_event) => {
+            // 只有在鼠标模式启用时才转发鼠标事件
+            if mouse_enabled {
+                mouse_event_to_bytes(mouse_event)
+            } else {
+                None
+            }
+        }
         Event::Paste(text) => {
             // 粘贴事件，直接返回文本的UTF-8字节
             Some(text.as_bytes().to_vec())

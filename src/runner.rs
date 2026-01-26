@@ -338,9 +338,19 @@ impl Runner {
     ///
     /// # 返回值
     /// 成功返回Ok(())，失败返回错误
+    ///
+    /// # 实现说明
+    /// 某些 CLI（如 codex）有"粘贴突发"检测机制，会把快速输入后的 Enter
+    /// 当作文本累积而不是提交。codex 的 PASTE_ENTER_SUPPRESS_WINDOW 为 120ms，
+    /// 即粘贴活动结束后 120ms 内 Enter 仍被当作换行。
+    /// 因此在发送文本后等待 150ms 再发送回车，确保粘贴窗口完全关闭。
     pub fn send_line(&mut self, line: &str) -> Result<()> {
         // 发送文本内容（直接写入PTY）
         self.send_input(line)?;
+
+        // 等待 150ms，确保超过 codex 的 PASTE_ENTER_SUPPRESS_WINDOW (120ms)
+        // 这样 Enter 会被正确识别为提交而不是换行
+        thread::sleep(Duration::from_millis(150));
 
         // 发送回车通过 channel，让输入线程发送
         // 这样回车和用户按Enter走同样的路径

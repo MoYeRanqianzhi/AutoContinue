@@ -173,12 +173,6 @@ impl Runner {
         // 启用终端原始模式，以便直接获取用户输入
         let _ = terminal::enable_raw_mode();
 
-        // 启用鼠标捕获，以便转发鼠标事件到CLI
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::EnableMouseCapture
-        );
-
         let running_output = self.running.clone();
         let running_input = self.running.clone();
 
@@ -439,11 +433,6 @@ impl Runner {
     /// 设置运行标志为false，通知所有相关线程停止
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
-        // 禁用鼠标捕获
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::DisableMouseCapture
-        );
         // 恢复终端模式
         let _ = terminal::disable_raw_mode();
     }
@@ -451,8 +440,9 @@ impl Runner {
 
 /// 将crossterm事件转换为PTY可接受的字节序列
 ///
-/// 该函数处理键盘事件、鼠标事件和粘贴事件，将它们转换为
+/// 该函数处理键盘事件和粘贴事件，将它们转换为
 /// 相应的ANSI转义序列或UTF-8字节。
+/// 鼠标事件暂不支持。
 ///
 /// # 参数
 /// - `event`: crossterm事件
@@ -462,73 +452,12 @@ impl Runner {
 fn event_to_bytes(event: &Event) -> Option<Vec<u8>> {
     match event {
         Event::Key(key_event) => key_event_to_bytes(key_event),
-        Event::Mouse(mouse_event) => mouse_event_to_bytes(mouse_event),
         Event::Paste(text) => {
             // 粘贴事件，直接返回文本的UTF-8字节
             Some(text.as_bytes().to_vec())
         }
-        _ => None, // 忽略其他事件（窗口大小变化等）
+        _ => None, // 忽略鼠标事件和其他事件
     }
-}
-
-/// 将鼠标事件转换为字节序列（SGR编码格式）
-///
-/// 使用SGR扩展鼠标编码格式：CSI < Cb ; Cx ; Cy M/m
-/// 这是现代终端普遍支持的格式，支持大于223的坐标
-///
-/// # 参数
-/// - `mouse_event`: 鼠标事件
-///
-/// # 返回值
-/// 返回SGR格式的鼠标转义序列
-fn mouse_event_to_bytes(mouse_event: &crossterm::event::MouseEvent) -> Option<Vec<u8>> {
-    use crossterm::event::{MouseButton, MouseEventKind};
-
-    let crossterm::event::MouseEvent { kind, column, row, modifiers } = mouse_event;
-
-    // 计算按钮码（基础值）
-    // 0 = 左键, 1 = 中键, 2 = 右键
-    // 加上修饰符：+4 Shift, +8 Alt, +16 Ctrl
-    let mut cb: u8 = match kind {
-        MouseEventKind::Down(MouseButton::Left) => 0,
-        MouseEventKind::Down(MouseButton::Middle) => 1,
-        MouseEventKind::Down(MouseButton::Right) => 2,
-        MouseEventKind::Up(MouseButton::Left) => 0,
-        MouseEventKind::Up(MouseButton::Middle) => 1,
-        MouseEventKind::Up(MouseButton::Right) => 2,
-        MouseEventKind::Drag(MouseButton::Left) => 32,      // 移动 + 左键
-        MouseEventKind::Drag(MouseButton::Middle) => 33,    // 移动 + 中键
-        MouseEventKind::Drag(MouseButton::Right) => 34,     // 移动 + 右键
-        MouseEventKind::Moved => 35,                         // 纯移动（无按键）
-        MouseEventKind::ScrollUp => 64,
-        MouseEventKind::ScrollDown => 65,
-        MouseEventKind::ScrollLeft => 66,
-        MouseEventKind::ScrollRight => 67,
-    };
-
-    // 添加修饰符
-    if modifiers.contains(KeyModifiers::SHIFT) {
-        cb += 4;
-    }
-    if modifiers.contains(KeyModifiers::ALT) {
-        cb += 8;
-    }
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        cb += 16;
-    }
-
-    // 坐标（1-based）
-    let cx = column + 1;
-    let cy = row + 1;
-
-    // 判断是按下还是释放
-    let suffix = match kind {
-        MouseEventKind::Up(_) => 'm',  // 释放
-        _ => 'M',                       // 按下/移动/滚动
-    };
-
-    // 生成SGR格式：ESC [ < Cb ; Cx ; Cy M/m
-    Some(format!("\x1b[<{};{};{}{}", cb, cx, cy, suffix).into_bytes())
 }
 
 /// 将键盘事件转换为字节序列

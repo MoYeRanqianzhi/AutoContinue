@@ -6,9 +6,15 @@
 //!
 //! 使用 trait 对象实现适配器模式：
 //! - `Detector` trait：定义统一的检测接口
-//! - `ClaudeDetector`：Claude Code 适配器，监控 JSONL 会话文件
-//! - `CodexDetector`：Codex 适配器，监控 JSONL 会话文件
+//! - `JsonlDetector`：JSONL 通用检测器（通过配置适配 Claude Code 和 Codex）
 //! - `GenericDetector`：通用适配器，基于输出文本模式匹配
+//!
+//! ## 模块组织
+//!
+//! - `jsonl.rs`：JSONL 通用检测器实现（`JsonlDetector` + `JsonlDetectorConfig`）
+//! - `claude.rs`：Claude Code 工厂函数（返回配置好的 `JsonlDetector`）
+//! - `codex.rs`：Codex 工厂函数（返回配置好的 `JsonlDetector`）
+//! - `generic.rs`：通用文本模式匹配检测器
 //!
 //! ## 使用流程
 //!
@@ -21,6 +27,7 @@
 pub mod claude;
 pub mod codex;
 pub mod generic;
+pub mod jsonl;
 
 use anyhow::Result;
 use std::fmt;
@@ -99,7 +106,7 @@ pub trait Detector: Send {
     ///
     /// 由输出转发线程调用，将 PTY 读取到的原始字节传入检测器。
     /// 检测器可以选择分析这些数据（如 GenericDetector 的文本模式匹配），
-    /// 也可以忽略它们（如 ClaudeDetector 主要依赖 JSONL 文件）。
+    /// 也可以忽略它们（如 JsonlDetector 主要依赖 JSONL 文件）。
     ///
     /// # 参数
     /// - `data`: 从 PTY 读取的原始字节切片
@@ -142,16 +149,16 @@ pub trait Detector: Send {
 /// 返回对应的检测器 trait 对象
 ///
 /// # 匹配规则
-/// - 名称包含 "claude" → `ClaudeDetector`
-/// - 名称包含 "codex" → `CodexDetector`
+/// - 名称包含 "claude" → 使用 Claude 配置的 `JsonlDetector`
+/// - 名称包含 "codex" → 使用 Codex 配置的 `JsonlDetector`
 /// - 其他 → `GenericDetector`
 pub fn create_detector(cli_name: &str) -> Box<dyn Detector> {
     let name_lower = cli_name.to_lowercase();
 
     if name_lower.contains("claude") {
-        Box::new(claude::ClaudeDetector::new())
+        Box::new(claude::create_claude_detector())
     } else if name_lower.contains("codex") {
-        Box::new(codex::CodexDetector::new())
+        Box::new(codex::create_codex_detector())
     } else {
         Box::new(generic::GenericDetector::new())
     }

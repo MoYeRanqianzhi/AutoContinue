@@ -17,6 +17,8 @@
 //! - `-st, --sleep-time`: 等待时间（秒），默认15秒
 //! - `-sth, --silence-threshold`: 静默阈值（秒），默认30秒
 //! - `-l, --limit`: 最大轮次限制，默认-1（无限制）
+//! - `-sh, --stop-hook`: 中断钩子命令（可多次指定）
+//! - `-sw, --stop-when`: 预设中断钩子条件（可多次指定）
 //! - `-h, --help`: 显示帮助信息
 //! - `-v, --version`: 显示版本信息
 //!
@@ -51,16 +53,16 @@ const AC_ARGS_WITH_VALUE: &[&str] = &[
     "-rpio", "--rpio", "--retry-prompt-io",
     // retry-prompt-pipe (管道命令)
     "-rpp", "--rpp", "--retry-prompt-pipe",
-    // cformat (继续管道格式提取，取2个值)
-    "--cformat",
-    // rformat (重试管道格式提取，取2个值)
-    "--rformat",
     // sleep-time
     "-st", "--st", "--sleep-time",
     // silence-threshold
     "-sth", "--sth", "--silence-threshold",
     // limit (最大轮次)
     "-l", "--l", "--limit",
+    // stop-hook (中断钩子命令)
+    "-sh", "--sh", "--stop-hook",
+    // stop-when (预设中断钩子)
+    "-sw", "--sw", "--stop-when",
 ];
 
 /// AC参数名称列表（不带值的参数）
@@ -78,7 +80,7 @@ const AC_ARGS_WITH_TWO_VALUES: &[&str] = &[
 
 /// AC特有的短参数列表（需要转换为双横线格式）
 /// 这些参数支持单横线格式（如 -cp）但会被转换为双横线格式（如 --cp）
-const AC_SHORT_ARGS: &[&str] = &["-cp", "-cpf", "-cpio", "-cpp", "-rp", "-rpf", "-rpio", "-rpp", "-st", "-sth", "-l"];
+const AC_SHORT_ARGS: &[&str] = &["-cp", "-cpf", "-cpio", "-cpp", "-rp", "-rpf", "-rpio", "-rpp", "-st", "-sth", "-l", "-sh", "-sw"];
 
 /// AutoContinue (AC) - 自动继续/重试CLI工具的包装器
 ///
@@ -93,7 +95,7 @@ pub struct Args {
     pub cli: String,
 
     /// 继续的提示词，当CLI正常结束时发送
-    /// 与 -cpf, -cpio 互斥
+    /// 与 -cpf, -cpio, -cpp 互斥
     #[arg(long = "continue-prompt", visible_alias = "cp", value_name = "PROMPT")]
     pub continue_prompt: Option<String>,
 
@@ -115,7 +117,7 @@ pub struct Args {
     pub continue_prompt_pipe: Option<String>,
 
     /// 重试的提示词，当CLI出错时发送
-    /// 与 -rpf, -rpio 互斥
+    /// 与 -rpf, -rpio, -rpp 互斥
     #[arg(long = "retry-prompt", visible_alias = "rp", value_name = "PROMPT")]
     pub retry_prompt: Option<String>,
 
@@ -140,24 +142,24 @@ pub struct Args {
     /// 指定前缀和后缀，从管道输出中提取最后一组匹配内容
     /// 例如：--cformat "<continue>" "</continue>"
     /// 仅在 -cpp 存在时生效
-    #[arg(long = "cformat", value_names = ["PREFIX", "SUFFIX"], num_args = 2)]
+    #[arg(long = "cformat", value_names = ["PREFIX", "SUFFIX"], num_args = 2, requires = "continue_prompt_pipe")]
     pub cformat: Option<Vec<String>>,
 
     /// 重试管道输出格式提取标签
     /// 指定前缀和后缀，从管道输出中提取最后一组匹配内容
     /// 例如：--rformat "<retry>" "</retry>"
     /// 仅在 -rpp 存在时生效
-    #[arg(long = "rformat", value_names = ["PREFIX", "SUFFIX"], num_args = 2)]
+    #[arg(long = "rformat", value_names = ["PREFIX", "SUFFIX"], num_args = 2, requires = "retry_prompt_pipe")]
     pub rformat: Option<Vec<String>>,
 
     /// 等待时间（秒），用于给用户自主回复的时间
-    /// 超过该时间则自动继续，默认15秒
-    #[arg(long = "sleep-time", visible_alias = "st", value_name = "SECONDS", default_value = "15")]
+    /// 超过该时间则自动继续，默认15秒，最小1秒
+    #[arg(long = "sleep-time", visible_alias = "st", value_name = "SECONDS", default_value = "15", value_parser = clap::value_parser!(u64).range(1..))]
     pub sleep_time: u64,
 
     /// 静默阈值（秒），CLI无输入/输出超过此时间后开始计算等待时间
-    /// 默认30秒，总等待时间 = 静默阈值 + 等待时间
-    #[arg(long = "silence-threshold", visible_alias = "sth", value_name = "SECONDS", default_value = "30")]
+    /// 默认30秒，最小1秒，总等待时间 = 静默阈值 + 等待时间
+    #[arg(long = "silence-threshold", visible_alias = "sth", value_name = "SECONDS", default_value = "30", value_parser = clap::value_parser!(u64).range(1..))]
     pub silence_threshold: u64,
 
     /// 最大自动发送轮次限制
@@ -165,6 +167,18 @@ pub struct Args {
     /// 默认 -1 表示无限制
     #[arg(long = "limit", visible_alias = "l", value_name = "COUNT", default_value = "-1", allow_hyphen_values = true)]
     pub limit: i64,
+
+    /// 中断钩子命令列表
+    /// 启动时 spawn 为长驻进程，进程退出或输出 "0" 时停止自动发送
+    /// 可多次指定以注册多个钩子
+    #[arg(long = "stop-hook", visible_alias = "sh", value_name = "COMMAND", action = clap::ArgAction::Append)]
+    pub stop_hook: Vec<String>,
+
+    /// 预设中断钩子列表
+    /// 支持格式：<round=N>, <error>, <time=DATETIME>, <duration=SECONDS>
+    /// 可多次指定以注册多个条件
+    #[arg(long = "stop-when", visible_alias = "sw", value_name = "CONDITION", action = clap::ArgAction::Append)]
+    pub stop_when: Vec<String>,
 
     /// 传递给CLI程序的其他参数
     /// 这些参数会原样传递给CLI程序
@@ -272,6 +286,13 @@ fn separate_and_reorder_args(args: Vec<String>) -> Vec<String> {
 
     // 遍历剩余参数
     while let Some(arg) = iter.next() {
+        // POSIX 惯例：-- 之后的所有参数强制归属 CLI，不再解析 AC 参数
+        if arg == "--" {
+            cli_args.push(arg);
+            cli_args.extend(iter);
+            break;
+        }
+
         if is_ac_arg_with_two_values(&arg) {
             // AC双值参数：保存参数名和连续2个值
             ac_args.push(convert_short_arg(&arg));
@@ -521,5 +542,103 @@ mod tests {
         assert_eq!(cformat[0], "<c>");
         assert_eq!(cformat[1], "</c>");
         assert!(args.cli_args.iter().any(|a| a == "--resume"));
+    }
+
+    /// 测试 -sh (--stop-hook) 单个钩子
+    #[test]
+    fn test_stop_hook_single() {
+        let args = parse_args_from(["ac", "claude", "-sh", "check_status.sh"]);
+        assert_eq!(args.cli, "claude");
+        assert_eq!(args.stop_hook, vec!["check_status.sh"]);
+    }
+
+    /// 测试 -sh (--stop-hook) 多个钩子（Append 行为）
+    #[test]
+    fn test_stop_hook_multiple() {
+        let args = parse_args_from([
+            "ac", "claude", "-sh", "hook1.sh", "-sh", "hook2.sh"
+        ]);
+        assert_eq!(args.stop_hook, vec!["hook1.sh", "hook2.sh"]);
+    }
+
+    /// 测试 -sw (--stop-when) 单个条件
+    #[test]
+    fn test_stop_when_single() {
+        let args = parse_args_from(["ac", "claude", "-sw", "<round=5>"]);
+        assert_eq!(args.cli, "claude");
+        assert_eq!(args.stop_when, vec!["<round=5>"]);
+    }
+
+    /// 测试 -sw (--stop-when) 多个条件（Append 行为）
+    #[test]
+    fn test_stop_when_multiple() {
+        let args = parse_args_from([
+            "ac", "claude", "-sw", "<round=5>", "-sw", "<error>"
+        ]);
+        assert_eq!(args.stop_when, vec!["<round=5>", "<error>"]);
+    }
+
+    /// 测试 -sw 值包含空格（如 time 条件）
+    #[test]
+    fn test_stop_when_with_spaces() {
+        let args = parse_args_from([
+            "ac", "claude", "-sw", "<time=2026-04-01 12:00:00>"
+        ]);
+        assert_eq!(args.stop_when, vec!["<time=2026-04-01 12:00:00>"]);
+    }
+
+    /// 测试 -sh 和 -sw 混合使用
+    #[test]
+    fn test_stop_hook_and_stop_when_mixed() {
+        let args = parse_args_from([
+            "ac", "claude", "-sh", "monitor.sh", "-sw", "<round=3>", "-sw", "<error>"
+        ]);
+        assert_eq!(args.stop_hook, vec!["monitor.sh"]);
+        assert_eq!(args.stop_when, vec!["<round=3>", "<error>"]);
+    }
+
+    /// 测试 -sh/-sw 放在 CLI 名称之前
+    #[test]
+    fn test_stop_args_before_cli() {
+        let args = parse_args_from([
+            "ac", "-sh", "hook.sh", "-sw", "<error>", "claude", "--resume"
+        ]);
+        assert_eq!(args.cli, "claude");
+        assert_eq!(args.stop_hook, vec!["hook.sh"]);
+        assert_eq!(args.stop_when, vec!["<error>"]);
+        assert!(args.cli_args.iter().any(|a| a == "--resume"));
+    }
+
+    /// 测试 `--` 分隔符后 -sh/-sw 归属 CLI 参数
+    #[test]
+    fn test_double_dash_stops_ac_parsing_for_stop_args() {
+        let args = parse_args_from([
+            "ac", "claude", "--", "-sh", "hook.sh", "-sw", "<error>"
+        ]);
+        assert_eq!(args.cli, "claude");
+        // -- 之后的 -sh/-sw 应归属 CLI 参数，不被 AC 解析
+        assert!(args.stop_hook.is_empty());
+        assert!(args.stop_when.is_empty());
+        // clap 的 trailing_var_arg 会消费 "--" 本身，所以 cli_args 中不一定包含 "--"
+        // 但 -sh, hook.sh, -sw, <error> 都应在 cli_args 中
+        assert!(args.cli_args.iter().any(|a| a == "-sh"));
+        assert!(args.cli_args.iter().any(|a| a == "hook.sh"));
+        assert!(args.cli_args.iter().any(|a| a == "-sw"));
+        assert!(args.cli_args.iter().any(|a| a == "<error>"));
+    }
+
+    /// 测试 `--` 分隔符前的 AC 参数仍被正确识别
+    #[test]
+    fn test_double_dash_with_ac_args_before() {
+        let args = parse_args_from([
+            "ac", "claude", "-sh", "hook.sh", "--", "-sw", "<error>"
+        ]);
+        assert_eq!(args.cli, "claude");
+        // -- 之前的 -sh 应被 AC 解析
+        assert_eq!(args.stop_hook, vec!["hook.sh"]);
+        // -- 之后的 -sw 应归属 CLI 参数
+        assert!(args.stop_when.is_empty());
+        assert!(args.cli_args.iter().any(|a| a == "-sw"));
+        assert!(args.cli_args.iter().any(|a| a == "<error>"));
     }
 }

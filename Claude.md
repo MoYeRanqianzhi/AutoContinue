@@ -9,7 +9,8 @@ AutoContinue (AC) 是一个使用 Rust 开发的 CLI 工具包装器，用于自
 1. **自动继续**: CLI 静默超时后自动发送继续提示词
 2. **智能检测**: 通过 Detector 适配器精确检测 CLI 状态和错误
 3. **自动重试**: 检测到错误时自动发送重试提示词
-4. **完整交互性**: 使用 PTY 保持 CLI 的完整功能
+4. **中断钩子**: 通过 stop-hook/stop-when 在满足条件时自动停止
+5. **完整交互性**: 使用 PTY 保持 CLI 的完整功能
 
 ## 使用方法
 
@@ -28,6 +29,18 @@ ac -cp "继续" claude --resume
 
 # 使用文件提示词
 ac claude -cpio prompt.md
+
+# 使用中断钩子：5轮后停止
+ac claude -sw "<round=5>"
+
+# 使用中断钩子：遇到错误停止 + 30分钟后停止
+ac claude -sw "<error>" -sw "<duration=1800>"
+
+# 使用自定义中断钩子命令
+ac claude -sh "python check_done.py"
+
+# 指定时间点停止
+ac claude -sw "<time=2026-04-28 18:00:00>"
 ```
 
 ### AC 参数
@@ -47,8 +60,21 @@ ac claude -cpio prompt.md
 | `-st, --sleep-time` | 额外等待时间（秒） | 15 |
 | `-sth, --silence-threshold` | 静默阈值（秒） | 30 |
 | `-l, --limit` | 最大自动发送轮次（-1为无限制） | -1 |
+| `-sh, --stop-hook` | 中断钩子命令（可多次指定） | - |
+| `-sw, --stop-when` | 预设中断条件（可多次指定） | - |
 | `-h, --help` | 显示帮助 | - |
 | `-v, --version` | 显示版本 | - |
+
+### stop-when 预设条件
+
+`-sw` 支持以下预设条件格式（可多次指定组合使用）：
+
+| 条件 | 说明 | 示例 |
+|------|------|------|
+| `<round=N>` | 自动发送达 N 轮后停止 | `-sw "<round=5>"` |
+| `<error>` | 检测到错误时停止 | `-sw "<error>"` |
+| `<time=DATETIME>` | 到达指定时间点后停止 | `-sw "<time=2026-04-28 18:00:00>"` |
+| `<duration=SECONDS>` | 运行指定秒数后停止 | `-sw "<duration=3600>"` |
 
 ## 项目结构
 
@@ -59,6 +85,7 @@ src/
 ├── config.rs            # 配置管理、提示词加载
 ├── runner.rs            # CLI运行器（PTY、IO转发）
 ├── monitor.rs           # 状态监控、Ctrl+C处理
+├── hook.rs              # 中断钩子（stop-hook/stop-when 解析与管理）
 └── detector/            # 状态/错误检测引擎
     ├── mod.rs           #   Detector trait + CliStatus 枚举
     ├── claude.rs        #   Claude Code 适配器（JSONL 会话文件监控）

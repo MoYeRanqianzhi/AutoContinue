@@ -47,8 +47,8 @@ const ERROR_PATTERNS: &[&str] = &[
     "traceback",   // Python 错误
     "segfault",
     "segmentation fault",
-    "abort",
-    "denied",      // permission denied 等
+    "aborted",
+    "permission denied",
 ];
 
 /// 通用检测适配器

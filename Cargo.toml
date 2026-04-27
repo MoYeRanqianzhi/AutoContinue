@@ -27,7 +27,6 @@ crossterm = "0.28"
 
 # 错误处理
 anyhow = "1"
-thiserror = "1"
 
 # JSON 解析 - 用于解析 JSONL 会话文件
 serde = { version = "1", features = ["derive"] }
